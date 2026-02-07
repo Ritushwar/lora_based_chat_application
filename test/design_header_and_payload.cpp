@@ -51,7 +51,7 @@ uint8_t header[HEADER_SIZE];
 #define PKT_RTS    0x01
 #define PKT_CTS    0x02
 #define PKT_DATA   0x03
-#define PKT_ACk    0x04
+#define PKT_ACK    0x04
 #define PKT_HEADER 0x05
 
 // flags
@@ -115,6 +115,15 @@ BLECharacteristic *txChar;
 bool deviceConnected = false;
 bool notifyEnabled = false;
 
+enum ProtoState{
+  IDLE,
+  WAIT_CTS
+};
+
+ProtoState protoState = IDLE;
+unsigned long protoTimer = 0;
+const unsigned long CTS_TIMEOUT = 2000;
+
 void set_default_header(){
   // default header is set to send RTS Signal
   header[PKT_TYPE] = PKT_RTS;
@@ -122,12 +131,19 @@ void set_default_header(){
   header[NODE_ID_S] = NODE_ID;
   header[USER_ID_S] = USER_ID;
   header[NODE_ID_R] = node_id_r;
-  header[USER_ID_S] = user_id_r;
+  header[USER_ID_R] = user_id_r;
   header[MSG_ID]    = msg_id;
   header[PAY_LEN]   = len_pay;
   header[CRC_MSB]   = crc_msb;
   header[CRC_LSB]   = crc_lsb;
 };
+
+// to check that packet is for me
+bool isForMe(uint8_t *hdr){
+  // return true if this packet is for me
+  return (hdr[NODE_ID_R] == NODE_ID &&
+          hdr[USER_ID_R] == USER_ID);
+}
 
 void setup_ble_communication(){
   BLEDevice::init("ESP32_BLE_CHAT_OLD_PHONE");
@@ -196,6 +212,47 @@ void setMode(int stataus){
     }
 }
 
+void sendRTS(){
+  set_default_header();
+  header[PKT_TYPE] = PKT_RTS;
+  header[FLAGS]    = FLAG_RTS;
+  header[PAY_LEN]  = 0;
+
+  Serial.println("Sending RTS.....");
+  LoRa.beginPacket();
+  LoRa.write(header, HEADER_SIZE);
+  LoRa.endPacket();
+
+  protoState = WAIT_CTS;
+  protoTimer = millis();
+}
+
+void handleRTS(uint8_t *hdr){
+  if(!isForMe(hdr)) return;
+
+  Serial.println("RTS received, sending CTS");
+
+  uint8_t cts[HEADER_SIZE];
+  memcpy(cts, hdr, HEADER_SIZE);
+
+  cts[PKT_TYPE] = PKT_CTS;
+  cts[FLAGS]    = FLAG_CTS;
+  cts[NODE_ID_S]= NODE_ID;
+  cts[USER_ID_S]= USER_ID;
+
+  LoRa.beginPacket();
+  LoRa.write(cts, HEADER_SIZE);
+  LoRa.endPacket();
+}
+
+void handleCTS(uint8_t *hdr){
+  if(!isForMe(hdr)) return;
+
+  if(protoState == WAIT_CTS){
+    Serial.println("CTS received");
+    protoState = IDLE;
+  }
+}
 class CCCDCallbacks : public BLEDescriptorCallbacks {
   void onWrite(BLEDescriptor *pDesc) {
     uint8_t* value = pDesc->getValue();
@@ -234,23 +291,39 @@ class RXCallbacks : public BLECharacteristicCallbacks {
       // transmit it to destination through lora
       mode = TX_MODE;
       setMode(mode);
-      delay(50);
+      delay(10);
 
-      LoRa.beginPacket();
-      LoRa.print(rxValue.c_str());
-      LoRa.endPacket();
-
-      Serial.print("Sent: ");
-      Serial.println(rxValue.c_str());
+      sendRTS();
 
       mode = RX_MODE;
       setMode(mode);
+
+      // wait for CTS
+
+      // CTS received then sent data packet
+
+      // check the validity of CTS
+      if(header[NODE_ID_R] == header[NODE_ID_S] && header[USER_ID_S] == header[USER_ID_S]){
+        // encode optional
+        // append data/string with header and transmit it through lora
+        // notify app though ble
+      }
+
+      // if CTS is not received then try after some time notify the app
+
+      // if data packet is sent then wait for ack
+
+
+      // if positive ack is received then notify the app
+
+      // if negative ack or no ack is received after timeout then re attemp to send the data packet
+
       }
   }
 };
 
 void send_rts(){
-
+  int a = 10;  // remaining to define
 }
 void setup(){
   Serial.begin(9600);
@@ -271,20 +344,41 @@ void loop() {
     if(mode == RX_MODE){
       int packetSize = LoRa.parsePacket();
 
-      if(packetSize){
-        String incoming = "";
+      if(packetSize >= HEADER_SIZE){
+        uint8_t rxHeader[HEADER_SIZE];
+        LoRa.readBytes(rxHeader, HEADER_SIZE);
 
-        while(LoRa.available()){
-          incoming += (char)LoRa.read();
-        }
         digitalWrite(led_when_receive, HIGH);
-        delay(100);
+        delay(50);
         digitalWrite(led_when_receive, LOW);
 
-        txChar->setValue(incoming.c_str());
-        txChar->notify();
-        delay(100);
+        uint8_t pktType = rxHeader[PKT_TYPE];
+
+        if(pktType == PKT_RTS){
+          handleRTS(rxHeader);
+        }
+        else if(pktType == PKT_CTS){
+          handleCTS(rxHeader);
+        }
+        // check for the type of packet
+
+        // if packet type is RTS then check the receiver id
+        // if id match then send CTS else do nothing
+
+        // if packet type is payload then check the receiver id
+        // if id match then encode(optional), notify the app then send ACK to sender
+        // txChar->setValue(incoming.c_str());
+        // txChar->notify();
+        // delay(100);
       }
+    }
+  }
+
+  if(protoState == WAIT_CTS){
+    if(millis() - protoTimer > CTS_TIMEOUT){
+      Serial.println("CTS timeout, retrying RTS");
+      header[FLAGS] |= FLAG_RETRY;
+      sendRTS();
     }
   }
 }
