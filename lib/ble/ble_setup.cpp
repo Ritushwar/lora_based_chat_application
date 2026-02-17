@@ -4,6 +4,7 @@
 BLECharacteristic *txChar;
 
 void notify_app(){
+  Serial.println("Sending payload to app");
   txChar->setValue(globalData.received_msg.c_str());
   txChar->notify();
   delay(10);
