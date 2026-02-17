@@ -57,16 +57,20 @@ void receivePKT(int header_size, int pay_pos){
       Serial.println("Packet is received");
       uint8_t rxHeader[header_size];
       LoRa.readBytes(rxHeader, header_size);
-      Serial.print("Header is received");
-      // Serial.println(rxHeader.c_str());
-      // can blink led to indicate that's optional
+      Serial.print("Header is received:");
+      for(int i =0; i<header_size; i++){
+        Serial.print(rxHeader[i], HEX);
+      }
+      Serial.println(" ");
+
+
       int payload_len = rxHeader[pay_pos];
       // if payload is available
       if(payload_len>0 && packetSize >= header_size + payload_len){
         uint8_t payload[payload_len];
         LoRa.readBytes(payload, payload_len);
 
-        // merge header + payload
+        Serial.println("Payload is also attached");
         uint8_t merged[header_size + payload_len];
         memcpy(merged, rxHeader, header_size);
         memcpy(merged+header_size, payload, payload_len);
@@ -85,24 +89,49 @@ void sendDATA(uint8_t * header, uint8_t * payload){
   mode = TX_MODE;
   setMode(mode);
 
+  Serial.println("Sending payload with data");
   // send header and payload at once
   LoRa.beginPacket();
   LoRa.write(header, 10);      // header size is fixed
   LoRa.write(payload, globalData.my_msg.length());
   LoRa.endPacket();
 
+  Serial.println("Succes in sending");
   mode = RX_MODE;
   setMode(mode);
+  delay(50);
 }
 
 void sendPKT(uint8_t * header){
   Serial.println("Sending CTS");
+  Serial.print("My packet is: ");
+  for(int i =0; i<10; i++){
+    Serial.print(header[i], HEX);
+  }
+  Serial.println(" ");
   mode = TX_MODE;
   setMode(mode);
   LoRa.beginPacket();
   LoRa.write(header, 10); 
   LoRa.endPacket();
   Serial.println("CTS is sent");
+  mode = RX_MODE;
+  setMode(mode);
+  delay(10);
+}
+void sendACK(uint8_t * header){
+  Serial.println("Sending ACK");
+  Serial.print("My packet is: ");
+  for(int i =0; i<10; i++){
+    Serial.print(header[i], HEX);
+  }
+  Serial.println(" ");
+  mode = TX_MODE;
+  setMode(mode);
+  LoRa.beginPacket();
+  LoRa.write(header, 10); 
+  LoRa.endPacket();
+  Serial.println("ACK is sent");
   mode = RX_MODE;
   setMode(mode);
   delay(10);

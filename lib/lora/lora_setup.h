@@ -21,3 +21,4 @@ void sendRTS(uint8_t *, int);
 void receivePKT(int, int);
 void sendDATA(uint8_t *,  uint8_t *);
 void sendPKT(uint8_t *);
+void sendACK(uint8_t *);
