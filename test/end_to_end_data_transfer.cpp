@@ -99,7 +99,7 @@ class RXCallbacks : public BLECharacteristicCallbacks {
 
       mode = RX_MODE;
       setMode(mode);
-      }
+    }
   }
 };
 
@@ -147,7 +147,7 @@ void setup() {
 
   Serial.println("BLE UART ready");
 
-  // setup BLE
+  // setup LoRa
   LoRa.setPins(cs, reset, dio0);
 
   pinMode(led_when_receive, OUTPUT);
