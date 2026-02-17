@@ -68,16 +68,16 @@ uint8_t crc_lsb =  crc & 0xFF;
 
    
 enum ProtoState {
-    STATE_IDLE,
-    STATE_SEND_RTS,
-    STATE_WAIT_CTS,
-    STATE_SEND_DATA,
-    STATE_WAIT_ACK,
-    STATE_SUCCESS,
-    STATE_SEND_CTS,
-    STATE_RECEIVED_DATA,
-    STATE_SEND_ACK,
-    STATE_ERROR
+    STATE_IDLE,          // normal state
+    STATE_SEND_RTS,      // to send rts
+    STATE_WAIT_CTS,      // waiting for cts
+    STATE_SEND_DATA,     // to send data
+    STATE_WAIT_ACK,      // waiting for ack
+    STATE_SUCCESS,       // successfully message was send
+    STATE_SEND_CTS,      // to send cts
+    STATE_RECEIVED_DATA, // to receive data
+    STATE_SEND_ACK,      // to send ack
+    STATE_ERROR          // error state
 };
 
 // Private state variable
@@ -128,13 +128,14 @@ void protocol_handlePacket(uint8_t* packet, uint8_t len){
   if(packet[PKT_TYPE] == PKT_CTS){
     Serial.println("CTS is received");
     if(!isForMe(packet)) return;
-    Serial.print("CTS is for me");
+    Serial.print("CTS is for me, i am sending data.");
     protoState = STATE_SEND_DATA;
   }
   else if (packet[PKT_TYPE] == PKT_DATA)
   {
-    if(!isForMe(packet)) return;
     Serial.println("Data packet is received");
+    if(!isForMe(packet)) return;
+    Serial.println("And it for me");
     globalData.received_msg = std::string((char*)(packet+HEADER_SIZE), len-HEADER_SIZE);
     protoState = STATE_RECEIVED_DATA;
   }
@@ -147,7 +148,7 @@ void protocol_handlePacket(uint8_t* packet, uint8_t len){
   {
     Serial.println("RTS is received");
     if(!isForMe(packet)) return;
-    Serial.println("RTS Packet is received");
+    Serial.println("This packet is for me, i am sending cts packet");
     protoState = STATE_SEND_CTS;
   }
   else{
@@ -201,6 +202,10 @@ void protocol_task(){
         len_pay = globalData.my_msg.length();
         uint8_t payload[len_pay];
         prepare_payload(payload, len_pay);
+        Serial.println("My payload");
+        for(int i =0; i<len_pay; i++){
+          Serial.print(payload[i], HEX);
+        }
         sendDATA(header, payload);
         protoState = STATE_WAIT_ACK;
         break;
@@ -226,7 +231,15 @@ void protocol_task(){
 
     case STATE_RECEIVED_DATA:
         notify_app();
-        protoState = STATE_SUCCESS;
+        protoState = STATE_SEND_ACK;
+
+    case STATE_SEND_ACK:
+         set_default_header();
+         header[PKT_TYPE] = PKT_ACK;
+         header[FLAGS]    = FLAG_SENT;
+         delay(200);
+         sendACK(header);
+         protoState = STATE_SUCCESS;
 
     case STATE_SUCCESS:
         Serial.println("Transmission successful");
