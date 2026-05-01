@@ -110,7 +110,7 @@ void setup() {
   Serial.begin(9600);
 
   // setup BLE
-  BLEDevice::init("ESP32_BLE_CHAT_OLD_PHONE");
+  BLEDevice::init("ESP32_BLE_CHAT_1");
 
   BLEServer *pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
