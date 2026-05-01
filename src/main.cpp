@@ -4,7 +4,7 @@
 #include "global_data.h"
 #include "msg_queue.h"
 
-
+// we have to change the address for each device
 uint8_t u_id_s = 0x00;
 uint8_t n_id_s = 0x00;
 uint8_t u_id_r = 0x01;
