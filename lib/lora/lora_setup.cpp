@@ -1,138 +1,123 @@
 #include<lora_setup.h>
 #include<my_protocal.h>
+
 // LoRa Modes
 #define RX_MODE 0
 #define TX_MODE 1
 int mode = RX_MODE;
 
-void setup_lora_communication(){
-  // setup LoRa
-  LoRa.setPins(cs, reset, dio0);
+// int chip_s;
+// int reset;
+// int intr;
+// int led_on_t_mode;
+// int led_on_r_mode;
 
-  pinMode(led_when_receive, OUTPUT);
-  pinMode(led_on_r_mode, OUTPUT);
-  pinMode(led_on_t_mode, OUTPUT);
+volatile bool receivedFlag = false;
+static int _last_pkt_size = 0;
+
+void IRAM_ATTR onReceiveISR() {
+  receivedFlag = true;   // Keep ISR short!
+}
+
+void setup_lora_communication(const int cs, const int rst, const int dio0, const int led_t, const int led_r){
+
+  // initializing pin
+  globalData.chip_s = cs;
+  globalData.reset = rst;
+  globalData.intr = dio0;
+  globalData.led_on_t_mode = led_t;
+  globalData.led_on_r_mode = led_r;
+
+  LoRa.setPins(globalData.chip_s, globalData.reset, globalData.intr);
+
+  pinMode(globalData.intr, INPUT);
+  attachInterrupt(digitalPinToInterrupt(globalData.intr), onReceiveISR, RISING);
+
+  pinMode(globalData.led_on_t_mode, OUTPUT);
+  pinMode(globalData.led_on_r_mode, OUTPUT);
 
   if (!LoRa.begin(frequency)){
     Serial.println("LoRa init failed");
     while (1);
     }
+
   setMode(RX_MODE);          // by default
   Serial.println("LoRa ready to operate");
+
 };
 
 void setMode(int stataus){
     if(stataus== RX_MODE){
       LoRa.receive();                       // set to receive mode
-      digitalWrite(led_on_t_mode, LOW);
-      digitalWrite(led_on_r_mode, HIGH);    // indicate my led
+      digitalWrite(globalData.led_on_t_mode, LOW);
+      digitalWrite(globalData.led_on_r_mode, HIGH);    // indicate my led
     }
     else{
-      digitalWrite(led_on_r_mode, LOW);      // set to transmit mode indicate my led
-      digitalWrite(led_on_t_mode, HIGH);      
+      digitalWrite(globalData.led_on_r_mode, LOW);      // set to transmit mode indicate my led
+      digitalWrite(globalData.led_on_t_mode, HIGH);      
     }
 };
 
-void sendRTS(uint8_t * header, int header_size){
-  // set to transmitting mode
+
+void send_packet(const lora_packet_struct &pkt){
+  // lora packet is send from here.
+  // disable interrupt
+  detachInterrupt(digitalPinToInterrupt(globalData.intr));
   mode = TX_MODE;
-  setMode(mode);
-  delay(20);
-
-  Serial.println("Sending RTS.....");
-  LoRa.beginPacket();
-  LoRa.write(header, header_size);
-  LoRa.endPacket();
-  Serial.println("RTS has been sent");
-
-  mode = RX_MODE;
-  setMode(mode);
-  delay(200);
-}
-
-void receivePKT(int header_size, int pay_pos){
-  if(mode == RX_MODE){
-    int packetSize = LoRa.parsePacket();
-    if(packetSize >= header_size){
-      Serial.println("Packet is received");
-      uint8_t rxHeader[header_size];
-      LoRa.readBytes(rxHeader, header_size);
-      Serial.print("Header is received:");
-      for(int i =0; i<header_size; i++){
-        Serial.print(rxHeader[i], HEX);
-      }
-      Serial.println(" ");
-
-
-      int payload_len = rxHeader[pay_pos];
-      // if payload is available
-      if(payload_len>0 && packetSize >= header_size + payload_len){
-        uint8_t payload[payload_len];
-        LoRa.readBytes(payload, payload_len);
-
-        Serial.println("Payload is also attached");
-        uint8_t merged[header_size + payload_len];
-        memcpy(merged, rxHeader, header_size);
-        memcpy(merged+header_size, payload, payload_len);
-
-        protocol_handlePacket(merged, header_size + payload_len);
-        return;
-                
-      }
-      // pass to protocol to further process
-      protocol_handlePacket(rxHeader, header_size);
-    }
-  }
-}
-
-void sendDATA(uint8_t * header, uint8_t * payload){
-  mode = TX_MODE;
-  setMode(mode);
-
-  Serial.println("Sending payload with data");
-  // send header and payload at once
-  LoRa.beginPacket();
-  LoRa.write(header, 10);      // header size is fixed
-  LoRa.write(payload, globalData.my_msg.length());
-  LoRa.endPacket();
-
-  Serial.println("Succes in sending");
-  mode = RX_MODE;
   setMode(mode);
   delay(50);
+
+  Serial.println("Before Sending.");
+  Serial.print("Size of lora packet: ");
+  Serial.println(8 + pkt.PAY_LEN);
+
+  LoRa.beginPacket();
+  LoRa.write((uint8_t*)&pkt, 8 + pkt.PAY_LEN);
+
+  int result = LoRa.endPacket(false);  // false blocking TX
+
+  Serial.print("EndPacket result: ");
+  Serial.println(result);  // 1 = success, 0 = failed
+
+  // enable interrupt
+  attachInterrupt(digitalPinToInterrupt(globalData.intr), onReceiveISR, RISING);
+  
+  mode = RX_MODE;
+  setMode(RX_MODE);
+  Serial.println("Packet Sent.");
 }
 
-void sendPKT(uint8_t * header){
-  Serial.println("Sending CTS");
-  Serial.print("My packet is: ");
-  for(int i =0; i<10; i++){
-    Serial.print(header[i], HEX);
+int get_packet_size(){
+
+  noInterrupts();
+  receivedFlag = false;
+  interrupts();
+  _last_pkt_size = LoRa.parsePacket();
+  if(_last_pkt_size == 0){
+    mode = RX_MODE;     // go back to receiving mode
+    setMode(mode);
+    return 0;
   }
-  Serial.println(" ");
-  mode = TX_MODE;
-  setMode(mode);
-  LoRa.beginPacket();
-  LoRa.write(header, 10); 
-  LoRa.endPacket();
-  Serial.println("CTS is sent");
-  mode = RX_MODE;
-  setMode(mode);
-  delay(10);
+  return _last_pkt_size;
 }
-void sendACK(uint8_t * header){
-  Serial.println("Sending ACK");
-  Serial.print("My packet is: ");
-  for(int i =0; i<10; i++){
-    Serial.print(header[i], HEX);
+
+lora_packet_struct get_packet(){
+
+  lora_packet_struct pkt;
+  memset(&pkt, 0, sizeof(pkt));
+
+  int i = 0;
+  while (LoRa.available() && i < (int)sizeof(lora_packet_struct))
+  {
+    ((uint8_t*)&pkt)[i++] = LoRa.read();
   }
-  Serial.println(" ");
-  mode = TX_MODE;
+
+  mode = RX_MODE;     // go back to receiving mode
   setMode(mode);
-  LoRa.beginPacket();
-  LoRa.write(header, 10); 
-  LoRa.endPacket();
-  Serial.println("ACK is sent");
-  mode = RX_MODE;
-  setMode(mode);
-  delay(10);
+
+  return pkt;
+}
+
+bool is_packet_available(){
+  return receivedFlag;
 }
