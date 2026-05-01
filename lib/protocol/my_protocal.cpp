@@ -1,255 +1,255 @@
-// This is to design the correct header format for two way reliable communication using lora
+#include "my_protocal.h"
 
-/*  
-  Byte 0: Packet Type      (1B)
-  Byte 1: Flag / Status    (1B)
-  Byte 2  : Node ID (Sender)   (1B)
-  Byte 3  : User ID (Sender)   (1B)
-  Byte 4  : Node ID (Receiver) (1B)
-  Byte 5  : User ID (Receiver) (1B)
-  Byte 6  : Message ID         (1B)
-  Byte 7  : Payload Length     (1B)
-  Byte 8  : CRC (MSB)          (1B)
-  Byte 9  : CRC (LSB)          (1B)
---------------------------------
-  Byte 10+: Payload (N bytes)
-*/
+uint8_t my_user_id = 0x00;
+uint8_t my_node_id = 0x00;
+uint8_t user_id_r = 0x00;
+uint8_t node_id_r = 0x00;
+uint8_t msg_id    = 0x00;
+uint8_t msg_id_r  = 0x00;
+std::string msg   = "";
+std::string msg_r = "";
 
-// let's define constraints
+#define TIMEOUT_MS 3000UL
+#define POST_SUCCESS_DELAY 100UL
+static unsigned long rts_start_ms = 0;
+static unsigned long data_start_ms = 0;
+static unsigned long cts_start_ms = 0;
+static unsigned long success_start_ms = 0;
+int max_retry = 3;
+int rts_retry_c = 0;
+int data_retry_c = 0;
 
-// #include <ble_setup.h>
-#include<global_data.h>
-#include<my_protocal.h>
-#include<lora_setup.h>
-#include<ble_setup.h>
-
-#define HEADER_SIZE 10
-uint8_t header[HEADER_SIZE];
-
-// header index mapping
-#define PKT_TYPE    0
-#define FLAGS       1
-#define NODE_ID_S   2
-#define USER_ID_S   3
-#define NODE_ID_R   4
-#define USER_ID_R   5
-#define MSG_ID      6
-#define PAY_LEN     7
-#define CRC_MSB     8
-#define CRC_LSB     9
-
-// packets types
-#define PKT_RTS    0x01
-#define PKT_CTS    0x02
-#define PKT_DATA   0x03
-#define PKT_ACK    0x04
-#define PKT_HEADER 0x05
-
-// flags
-#define FLAG_RTS   0x01     // 0000 0001
-#define FLAG_CTS   0x02     // 0000 0010
-#define FLAG_SENT  0x04     // 0000 0100
-#define FLAG_DEL   0x08     // 0000 1000
-#define FLAG_ERROR 0x10     // 0001 0000
-#define FLAG_RETRY 0x20     // 0010 0000
-#define FLAG_DATA  0x40     // 0100 0000
-
-
-// message id
-uint8_t msg_id = 0x00;
-
-// payload length
-uint8_t len_pay = 0x00;
-
-//crc
-uint16_t crc = 0x0000 ;    // dummy crc
-uint8_t crc_msb = (crc >> 8) & 0xFF; 
-uint8_t crc_lsb =  crc & 0xFF;
-
-   
 enum ProtoState {
-    STATE_IDLE,          // normal state
-    STATE_SEND_RTS,      // to send rts
-    STATE_WAIT_CTS,      // waiting for cts
-    STATE_SEND_DATA,     // to send data
-    STATE_WAIT_ACK,      // waiting for ack
-    STATE_SUCCESS,       // successfully message was send
-    STATE_SEND_CTS,      // to send cts
-    STATE_RECEIVED_DATA, // to receive data
-    STATE_SEND_ACK,      // to send ack
-    STATE_ERROR          // error state
+    IDLE,
+    SEND_RTS,
+    WAIT_CTS,
+    SEND_DATA,
+    WAIT_ACK,
+    SUCCESS,
+    SEND_CTS,
+    WAIT_DATA,  
+    SEND_ACK
 };
 
-// Private state variable
-static ProtoState protoState = STATE_IDLE;
-// static std::string txBuffer;
+static ProtoState protoState = IDLE;
 
-static unsigned long stateTimer = 0;
-static uint8_t retryCount = 0;
+static bool cts_received  = false;
+static bool ack_received  = false;
+static bool rts_received  = false;
+static bool data_received = false;
 
-// ProtoState protoState = STATE_IDLE;
-// unsigned long protoTimer = 0;
-const unsigned long CTS_TIMEOUT = 10000;     // 10 sec
+static bool channel_busy = false;
 
-void protocol_sendMessage(const std::string& msg){
-  if(protoState != STATE_IDLE){
-    Serial.println("Protocol Busy");
+void reset_channel() {
+    cts_received  = false;
+    ack_received  = false;
+    rts_received  = false;
+    data_received = false;
+    channel_busy  = false;
+    rts_retry_c   = 0;
+    data_retry_c  = 0;
+}
+
+bool is_for_me(uint8_t u_id_r, uint8_t n_id_r){
+    if(u_id_r== my_user_id && n_id_r == my_node_id){
+        return true;
+    }
+    else{
+        return false;
+    }
+}
+void set_my_add(uint8_t user_id, uint8_t node_id) {
+    my_user_id = user_id;
+    my_node_id = node_id;
+}
+
+void set_r_add(uint8_t user_id, uint8_t node_id) {
+    user_id_r = user_id;
+    node_id_r = node_id;
+}
+
+void send_rts() {
+    Serial.println("Sending RTS");
+    send_packet(get_rts(my_user_id, my_node_id, user_id_r, node_id_r, msg_id));
+}
+
+void send_cts() {
+    Serial.println("Sending CTS");
+    send_packet(get_cts(my_user_id, my_node_id, user_id_r, node_id_r, msg_id_r));
+}
+
+void send_data() {
+    Serial.println("Sending DATA");
+    send_packet(get_data_pkt(my_user_id, my_node_id, user_id_r, node_id_r, msg_id, msg));
+}
+
+void send_ack() {
+    Serial.println("Sending ACK");
+    send_packet(get_ack(my_user_id, my_node_id, user_id_r, node_id_r, msg_id_r));
+}
+
+void ble_update(){
+    if(msgQueue.available() && !channel_busy && protoState == IDLE){
+        msg = msgQueue.pop();
+        channel_busy = true;
+        protoState = SEND_RTS;
+    }
+
+    if(msg_r.length() > 0){
+        Serial.println("Received: " + String(msg_r.c_str()));
+        globalData.received_msg = msg_r;
+        msg_r.clear();
+    }
     return;
-  }
-  Serial.println("Success in assign to global variable");
-  globalData.my_msg = msg;
-  protoState = STATE_SEND_RTS;
-};
-
-void set_default_header(){
-  // default header is set to send RTS packet
-  header[PKT_TYPE]  = PKT_RTS;
-  header[FLAGS]     = FLAG_RTS;
-  header[NODE_ID_S] = globalData.NODE_ID;
-  header[USER_ID_S] = globalData.USER_ID;
-  header[NODE_ID_R] = globalData.node_id_r;
-  header[USER_ID_R] = globalData.user_id_r;
-  header[MSG_ID]    = 0x00;
-  header[PAY_LEN]   = 0x00;
-  header[CRC_MSB]   = 0x00;
-  header[CRC_LSB]   = 0x00;
-};
-
-// to check that packet is for me
-bool isForMe(uint8_t *hdr){
-  // return true if this packet is for me
-  return (hdr[NODE_ID_R] == globalData.NODE_ID &&
-          hdr[USER_ID_R] == globalData.USER_ID);
 }
 
-void protocol_handlePacket(uint8_t* packet, uint8_t len){
-  Serial.println("Received header PKT type:");
-  Serial.println(packet[0], HEX);
-  if(packet[PKT_TYPE] == PKT_CTS){
-    Serial.println("CTS is received");
-    if(!isForMe(packet)) return;
-    Serial.print("CTS is for me, i am sending data.");
-    protoState = STATE_SEND_DATA;
-  }
-  else if (packet[PKT_TYPE] == PKT_DATA)
-  {
-    Serial.println("Data packet is received");
-    if(!isForMe(packet)) return;
-    Serial.println("And it for me");
-    globalData.received_msg = std::string((char*)(packet+HEADER_SIZE), len-HEADER_SIZE);
-    protoState = STATE_RECEIVED_DATA;
-  }
-  else if(packet[PKT_TYPE] == PKT_ACK){
-    if(!isForMe(packet)) return;
-    Serial.println("ACK packet is received");
-    protoState = STATE_SUCCESS;
-  }
-  else if (packet[PKT_TYPE] == PKT_RTS)
-  {
-    Serial.println("RTS is received");
-    if(!isForMe(packet)) return;
-    Serial.println("This packet is for me, i am sending cts packet");
-    protoState = STATE_SEND_CTS;
-  }
-  else{
-    Serial.print("Nothing match");
-  }
-}
-uint8_t get_msg_id(){
-  msg_id++;
-  return msg_id;
-}
+void lora_update(){
+    if(!is_packet_available())  return;
 
-
-
-void prepare_payload(uint8_t* payload, int pay_len){
-  set_default_header();
-  header[PKT_TYPE]  = PKT_DATA;
-  header[FLAGS]     = FLAG_DATA;
-  header[MSG_ID]    = get_msg_id();
-  header[PAY_LEN]   = pay_len;
-  header[CRC_MSB]   = 0x00;
-  header[CRC_LSB]   = 0x00;
-
-  for(int i = 0; i<pay_len; i++){
-    payload[i] = globalData.my_msg[i];
-    Serial.println(payload[i]);
-  }
-}
-
-void protocol_task(){
-
-  switch(protoState){
-
-    case STATE_IDLE:
-      receivePKT(HEADER_SIZE,PAY_LEN);
-      break;
-
-    case STATE_SEND_RTS:{
-      set_default_header();
-      sendRTS(header ,HEADER_SIZE);
-      // stateTimer = millis();
-      protoState = STATE_WAIT_CTS;
-      break;
-    }  
-
-    case STATE_WAIT_CTS:{
-      receivePKT(HEADER_SIZE,PAY_LEN);
-      break;
+    int pkt_size = get_packet_size();
+    if(pkt_size < 8){
+        Serial.print("Invalid packet size of: ");
+        Serial.println(pkt_size);
+        lora_packet_struct random_pkt = get_packet();    // discard the packet
+        return;
+    }
+    else{
+       Serial.print("Valid packet size of: "); 
+       Serial.println(pkt_size);
     }
 
-    case STATE_SEND_DATA: {
-        len_pay = globalData.my_msg.length();
-        uint8_t payload[len_pay];
-        prepare_payload(payload, len_pay);
-        Serial.println("My payload");
-        for(int i =0; i<len_pay; i++){
-          Serial.print(payload[i], HEX);
+    lora_packet_struct pkt = get_packet();
+    
+    // check if the packet is addressed to me
+    if(!is_for_me(pkt.USER_ID_R, pkt.NODE_ID_R)){
+        return;
+    }
+
+    switch (pkt.PKT_TYPE)
+    {
+    case 0x01:   // RTS
+        if(!channel_busy){
+            msg_id_r = pkt.MSG_ID;
+            rts_received = true;
+        }else{
+            Serial.println("RTS ignored — channel busy");
         }
-        sendDATA(header, payload);
-        protoState = STATE_WAIT_ACK;
+        break;
+    
+    case 0x02:    // CTS
+        cts_received = true;
+        break;
+    
+    case 0x03:    // DATA
+        msg_id_r = pkt.MSG_ID;
+        msg_r.assign((char*)pkt.PAYLOAD, pkt.PAY_LEN);
+        data_received = true;
+        break;
+    
+    case 0x04:  // ACK
+        if(pkt.MSG_ID == msg_id){
+            ack_received = true;
+        }
+        break;;    
+    
+    default:
         break;
     }
-
-    case STATE_WAIT_ACK:{
-        // if(millis() - stateTimer > ACK_TIMEOUT){
-        // handleRetry();
-        receivePKT(HEADER_SIZE,PAY_LEN);
-        break;
-    }
-
-    case STATE_SEND_CTS:{
-        set_default_header();
-        header[PKT_TYPE] = PKT_CTS;
-        header[FLAGS]    = FLAG_CTS;
-        delay(200);
-        sendPKT(header);
-        Serial.println("Set in idle state");
-        protoState = STATE_IDLE;
-        break;
-    }
-
-    case STATE_RECEIVED_DATA:
-        notify_app();
-        protoState = STATE_SEND_ACK;
-
-    case STATE_SEND_ACK:
-         set_default_header();
-         header[PKT_TYPE] = PKT_ACK;
-         header[FLAGS]    = FLAG_SENT;
-         delay(200);
-         sendACK(header);
-         protoState = STATE_SUCCESS;
-
-    case STATE_SUCCESS:
-        Serial.println("Transmission successful");
-        retryCount = 0;
-        protoState = STATE_IDLE;
-        break;
-    case STATE_ERROR:
-        Serial.println("Transmission failed");
-        retryCount = 0;
-        protoState = STATE_IDLE;
-        break;
 }
-};
+
+void fsm_update(){
+    switch (protoState)
+    {
+    case IDLE:
+        // small cooldown after sucess before accepting new RTS and success
+        if (millis() - success_start_ms < POST_SUCCESS_DELAY) break;
+        if(rts_received){
+            rts_received = false;
+            protoState = SEND_CTS;
+        }
+        break;
+    
+    case SEND_RTS:
+        send_rts();
+        rts_start_ms = millis();
+        protoState = WAIT_CTS;
+        break;
+    
+    case WAIT_CTS:
+        if (cts_received){
+            cts_received = false;
+            protoState = SEND_DATA;
+        }
+        else if (millis()- rts_start_ms > TIMEOUT_MS)
+        {
+            Serial.println("Timeout waiting for CTS, retrying....");
+            rts_retry_c++;
+            if(rts_retry_c <= max_retry){
+                protoState = SEND_RTS;
+            }else{
+                reset_channel();
+                protoState = IDLE;
+            }
+
+        }
+        break;
+
+    case SEND_DATA:
+        send_data();
+        data_start_ms = millis();
+        protoState = WAIT_ACK;
+        break;
+    
+    case WAIT_ACK:
+        if(ack_received){
+            ack_received = false;
+            protoState = SUCCESS;
+        }
+        else if(millis() - data_start_ms > TIMEOUT_MS){
+            Serial.println("Timeout waiting for ack, retrying ......");
+            data_retry_c++;
+            if(data_retry_c <= max_retry){
+                protoState = SEND_DATA;
+            }else{
+                reset_channel();
+                protoState = IDLE;
+            }
+        }
+        break;
+    
+    case SUCCESS:
+        Serial.println("Message sent successfully!");
+        msg_id++;
+        success_start_ms = millis();
+        reset_channel();
+        protoState = IDLE;
+        break;
+    
+    case SEND_CTS:
+        send_cts();
+        cts_start_ms = millis();
+        protoState = WAIT_DATA;
+        break;
+    
+    case WAIT_DATA:
+        if(data_received){
+            data_received = false;
+            protoState = SEND_ACK;
+        }
+        else if(millis() - cts_start_ms > TIMEOUT_MS){
+            Serial.println("Timeout waiting for DATA, return to IDLE");
+            reset_channel();
+            protoState = IDLE;
+        }
+        break;
+    
+    case SEND_ACK:
+        send_ack();
+        reset_channel();
+        protoState = IDLE;
+        break;
+
+    default:
+        break;
+    }
+}
