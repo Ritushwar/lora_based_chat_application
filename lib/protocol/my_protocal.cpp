@@ -195,8 +195,8 @@ void fsm_update(){
 
                 // push to the queue
                 notificationQueue.push(my_noti);
-                protoState = IDLE;
                 reset_channel();
+                protoState = IDLE;
             }
 
         }
