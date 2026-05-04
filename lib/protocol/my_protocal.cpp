@@ -4,7 +4,7 @@ std::string msg_r = "";
 BLEmsg my_msg;
 notification my_noti;
 
-#define TIMEOUT_MS 3000UL
+#define TIMEOUT_MS 2000UL
 #define POST_SUCCESS_DELAY 100UL
 static unsigned long rts_start_ms = 0;
 static unsigned long data_start_ms = 0;
@@ -53,15 +53,6 @@ bool is_for_me(uint8_t u_id_r, uint8_t n_id_r){
         return false;
     }
 }
-// void set_my_add(uint8_t user_id, uint8_t node_id) {
-//     my_user_id = user_id;
-//     my_node_id = node_id;
-// }
-
-// void set_r_add(uint8_t user_id, uint8_t node_id) {
-//     user_id_r = user_id;
-//     node_id_r = node_id;
-// }
 
 void send_rts() {
     Serial.println("Sending RTS");
@@ -117,7 +108,7 @@ void lora_update(){
     
     // check if the packet is addressed to me
     if(!is_for_me(pkt.USER_ID_R, pkt.NODE_ID_R)){
-        Serial.print("This packet id not for me:"); 
+        Serial.println("This packet id not for me:"); 
         return;
     }
 
@@ -190,7 +181,7 @@ void fsm_update(){
         {
             Serial.println("Timeout waiting for CTS, retrying....");
             rts_retry_c++;
-            if(rts_retry_c <= max_retry){
+            if(rts_retry_c < max_retry){
                 protoState = SEND_RTS;
             }else{
                 Serial.println("Receiver not availabe to receive");
@@ -205,6 +196,7 @@ void fsm_update(){
                 // push to the queue
                 notificationQueue.push(my_noti);
                 protoState = IDLE;
+                reset_channel();
             }
 
         }
