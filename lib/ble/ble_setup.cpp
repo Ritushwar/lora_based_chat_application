@@ -4,10 +4,13 @@
 BLECharacteristic *txChar;
 
 void notify_app(){
-  if(!globalData.deviceConnected || !globalData.notifyEnabled) return;
-  if(globalData.received_msg.empty()) return;
 
-  Serial.println("Sending payload to app");
+  if(!globalData.deviceConnected || !globalData.notifyEnabled) return;
+  if(!globalData.notification_flag) return;
+
+  globalData.notification_flag = false;
+  Serial.println("Sending payload to app: ");
+  Serial.println(globalData.received_msg.c_str());
   txChar->setValue(globalData.received_msg.c_str());
   txChar->notify();
   globalData.received_msg.clear();
@@ -47,7 +50,7 @@ class RXCallbacks : public BLECharacteristicCallbacks {
       Serial.print("From phone: ");
       Serial.println(app_msg.c_str());
       Serial.println();
-      msgQueue.push(app_msg);             // push the message to the queue
+      parseBLEData(app_msg);                // this will parsejson and push to queue
     }
   }
 };
