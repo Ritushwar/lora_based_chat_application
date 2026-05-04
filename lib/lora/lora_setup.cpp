@@ -6,12 +6,6 @@
 #define TX_MODE 1
 int mode = RX_MODE;
 
-// int chip_s;
-// int reset;
-// int intr;
-// int led_on_t_mode;
-// int led_on_r_mode;
-
 volatile bool receivedFlag = false;
 static int _last_pkt_size = 0;
 
