@@ -74,21 +74,6 @@ void send_ack() {
     send_packet(get_ack(globalData.u_id_s, globalData.n_id_s, globalData.u_id_r, globalData.n_id_r, msg_id_r));
 }
 
-void ble_update(){
-    if(msgQueue.available() && !channel_busy && protoState == IDLE){
-        my_msg = msgQueue.pop();
-        channel_busy = true;
-        protoState = SEND_RTS;
-    }
-
-    if(notificationQueue.available() && protoState == IDLE){
-        globalData.notification_flag = true;
-        notification my_notifi = notificationQueue.pop();
-        globalData.received_msg = jsonGenerate(my_notifi);
-    }
-    return;
-}
-
 void lora_update(){
     if(!is_packet_available())  return;
 
@@ -108,7 +93,7 @@ void lora_update(){
     
     // check if the packet is addressed to me
     if(!is_for_me(pkt.USER_ID_R, pkt.NODE_ID_R)){
-        Serial.println("This packet id not for me:"); 
+        Serial.println("This packet is not for me:"); 
         return;
     }
 
@@ -116,6 +101,7 @@ void lora_update(){
     {
     case 0x01:   // RTS
         if(!channel_busy){
+            channel_busy = true;
             msg_id_r = pkt.MSG_ID;
             rts_received = true;
         }else{
@@ -153,6 +139,21 @@ void lora_update(){
         break;
     }
 }
+void ble_update(){
+    if(msgQueue.available() && !channel_busy && protoState == IDLE){
+        my_msg = msgQueue.pop();
+        channel_busy = true;
+        protoState = SEND_RTS;
+    }
+
+    if(notificationQueue.available() && protoState == IDLE){
+        globalData.notification_flag = true;
+        notification my_notifi = notificationQueue.pop();
+        globalData.received_msg = jsonGenerate(my_notifi);
+    }
+    return;
+}
+
 
 void fsm_update(){
     switch (protoState)
