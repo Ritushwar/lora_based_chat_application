@@ -61,7 +61,7 @@ struct lora_packet{
     uint8_t NODE_ID_R;
     uint8_t MSG_ID;
     uint8_t PAY_LEN;
-    uint8_t PAYLOAD[50];
+    uint8_t PAYLOAD[100];
 };
 
 lora_packet_struct get_rts(uint8_t user_id_s , uint8_t node_id_s, uint8_t user_id_r, uint8_t node_id_r, uint8_t msg_id){
